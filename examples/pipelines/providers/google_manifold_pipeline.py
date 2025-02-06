@@ -14,10 +14,14 @@ import os
 
 from pydantic import BaseModel, Field
 
-import google.generativeai as genai
-from google.generativeai.types import GenerationConfig, GenerateContentConfig, Tool,GoogleSearchRetrieval
-
-
+from google import genai
+from google.genai.types import (
+    GenerateContentConfig,
+    Tool,
+    Part,
+    FunctionCallingConfig,
+    Content
+)
 class Pipeline:
     """Google GenAI pipeline"""
 
