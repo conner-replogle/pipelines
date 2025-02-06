@@ -15,7 +15,7 @@ import os
 from pydantic import BaseModel, Field
 
 import google.generativeai as genai
-from google.generativeai.types import GenerationConfig
+from google.generativeai.types import GenerationConfig, GenerateContentConfig, Tool,GoogleSearchRetrieval
 
 
 class Pipeline:
@@ -159,6 +159,11 @@ class Pipeline:
                 generation_config=generation_config,
                 safety_settings=safety_settings,
                 stream=body.get("stream", False),
+                config=GenerateContentConfig(
+                    tools=[Tool(
+                        google_search=GoogleSearchRetrieval
+                    )]
+                )
             )
 
             if body.get("stream", False):
