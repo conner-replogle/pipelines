@@ -17,10 +17,10 @@ from pydantic import BaseModel, Field
 from google import genai
 from google.genai.types import (
     GenerateContentConfig,
+    GenerationConfig,
     Tool,
-    Part,
-    FunctionCallingConfig,
-    Content
+    GoogleSearchRetrieval
+   
 )
 class Pipeline:
     """Google GenAI pipeline"""
