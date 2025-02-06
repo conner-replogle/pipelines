@@ -168,7 +168,7 @@ class Pipeline:
             print(chunk)
             if chunk.text:
                 sources = ""
-                if chunk.candidates[0].grounding_metadata is not None:
+                if chunk.candidates[0].grounding_metadata is not None and  chunk.candidates[0].grounding_metadata.grounding_chunks is not None:
                     for grounding_chunk in chunk.candidates[0].grounding_metadata.grounding_chunks:
                         sources += f"\nSource: [{grounding_chunk.web.title}]({grounding_chunk.web.uri})"
                     
