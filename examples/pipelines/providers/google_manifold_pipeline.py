@@ -88,9 +88,10 @@ class Pipeline:
     def pipe(
         self, user_message: str, model_id: str, messages: List[dict], body: dict
     ) -> Union[str, Iterator]:
+    
         if not self.valves.GOOGLE_API_KEY:
             return "Error: GOOGLE_API_KEY is not set"
-
+        print(body)
         try:
             genai.configure(api_key=self.valves.GOOGLE_API_KEY)
 
