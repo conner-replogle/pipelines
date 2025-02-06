@@ -5,7 +5,7 @@ date: 2024-06-06
 version: 1.3
 license: MIT
 description: A pipeline for generating text using Google's GenAI models in Open-WebUI.
-requirements: python-genai
+requirements: google-genai
 environment_variables: GOOGLE_API_KEY
 """
 from typing import List, Union, Iterator
