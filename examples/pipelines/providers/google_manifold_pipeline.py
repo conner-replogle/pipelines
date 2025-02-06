@@ -5,29 +5,20 @@ date: 2024-06-06
 version: 1.3
 license: MIT
 description: A pipeline for generating text using Google's GenAI models in Open-WebUI.
-requirements: google-genai
+requirements: python-genai
 environment_variables: GOOGLE_API_KEY
 """
-
 from typing import List, Union, Iterator
 import os
-
 from pydantic import BaseModel, Field
+from genai import Client, Model, GenerateParams
+from genai.exceptions import GenAiException
+from genai.schemas import ModelType
 
-from google import genai
-from google.genai.types import (
-    GenerateContentConfig,
-    GenerationConfig,
-    Tool,
-    GoogleSearchRetrieval
-   
-)
 class Pipeline:
     """Google GenAI pipeline"""
-
     class Valves(BaseModel):
         """Options to change from the WebUI"""
-
         GOOGLE_API_KEY: str = ""
         USE_PERMISSIVE_SAFETY: bool = Field(default=False)
 
@@ -35,51 +26,44 @@ class Pipeline:
         self.type = "manifold"
         self.id = "google_genai"
         self.name = "Google: "
-
         self.valves = self.Valves(**{
             "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY", ""),
             "USE_PERMISSIVE_SAFETY": False
         })
         self.pipelines = []
-
-        genai.configure(api_key=self.valves.GOOGLE_API_KEY)
+        self.client = Client(api_key=self.valves.GOOGLE_API_KEY)
         self.update_pipelines()
 
     async def on_startup(self) -> None:
         """This function is called when the server is started."""
-
         print(f"on_startup:{__name__}")
-        genai.configure(api_key=self.valves.GOOGLE_API_KEY)
+        self.client = Client(api_key=self.valves.GOOGLE_API_KEY)
         self.update_pipelines()
 
     async def on_shutdown(self) -> None:
         """This function is called when the server is stopped."""
-
         print(f"on_shutdown:{__name__}")
 
     async def on_valves_updated(self) -> None:
         """This function is called when the valves are updated."""
-
         print(f"on_valves_updated:{__name__}")
-        genai.configure(api_key=self.valves.GOOGLE_API_KEY)
+        self.client = Client(api_key=self.valves.GOOGLE_API_KEY)
         self.update_pipelines()
 
     def update_pipelines(self) -> None:
         """Update the available models from Google GenAI"""
-
         if self.valves.GOOGLE_API_KEY:
             try:
-                models = genai.list_models()
+                models = self.client.list_models()
                 self.pipelines = [
                     {
-                        "id": model.name[7:],  # the "models/" part messeses up the URL
+                        "id": model.name,
                         "name": model.display_name,
                     }
                     for model in models
-                    if "generateContent" in model.supported_generation_methods
-                    if model.name[:7] == "models/"
+                    if model.supports_generation
                 ]
-            except Exception:
+            except GenAiException:
                 self.pipelines = [
                     {
                         "id": "error",
@@ -92,83 +76,68 @@ class Pipeline:
     def pipe(
         self, user_message: str, model_id: str, messages: List[dict], body: dict
     ) -> Union[str, Iterator]:
-    
         if not self.valves.GOOGLE_API_KEY:
             return "Error: GOOGLE_API_KEY is not set"
-        print(body)
+        
         try:
-            genai.configure(api_key=self.valves.GOOGLE_API_KEY)
-
             if model_id.startswith("google_genai."):
                 model_id = model_id[12:]
             model_id = model_id.lstrip(".")
-
+            
             if not model_id.startswith("gemini-"):
                 return f"Error: Invalid model name format: {model_id}"
 
             print(f"Pipe function called for model: {model_id}")
             print(f"Stream mode: {body.get('stream', False)}")
 
+            model = Model(model_id, client=self.client)
+            
+            # Process messages
+            conversation = []
             system_message = next((msg["content"] for msg in messages if msg["role"] == "system"), None)
             
-            contents = []
+            if system_message:
+                conversation.append({"role": "system", "content": system_message})
+            
             for message in messages:
                 if message["role"] != "system":
                     if isinstance(message.get("content"), list):
-                        parts = []
-                        for content in message["content"]:
-                            if content["type"] == "text":
-                                parts.append({"text": content["text"]})
-                            elif content["type"] == "image_url":
-                                image_url = content["image_url"]["url"]
-                                if image_url.startswith("data:image"):
-                                    image_data = image_url.split(",")[1]
-                                    parts.append({"inline_data": {"mime_type": "image/jpeg", "data": image_data}})
-                                else:
-                                    parts.append({"image_url": image_url})
-                        contents.append({"role": message["role"], "parts": parts})
+                        # Handle multimodal content
+                        content = []
+                        for part in message["content"]:
+                            if part["type"] == "text":
+                                content.append({"type": "text", "text": part["text"]})
+                            elif part["type"] == "image_url":
+                                image_url = part["image_url"]["url"]
+                                content.append({"type": "image", "source": image_url})
+                        conversation.append({"role": message["role"], "content": content})
                     else:
-                        contents.append({
-                            "role": "user" if message["role"] == "user" else "model",
-                            "parts": [{"text": message["content"]}]
+                        conversation.append({
+                            "role": message["role"],
+                            "content": message["content"]
                         })
-            
-            if "gemini-1.5" in model_id:
-                model = genai.GenerativeModel(model_name=model_id, system_instruction=system_message)
-            else:
-                if system_message:
-                    contents.insert(0, {"role": "user", "parts": [{"text": f"System: {system_message}"}]})
-                
-                model = genai.GenerativeModel(model_name=model_id)
 
-            generation_config = GenerationConfig(
+            # Configure generation parameters
+            params = GenerateParams(
                 temperature=body.get("temperature", 0.7),
                 top_p=body.get("top_p", 0.9),
                 top_k=body.get("top_k", 40),
-                max_output_tokens=body.get("max_tokens", 8192),
+                max_tokens=body.get("max_tokens", 8192),
                 stop_sequences=body.get("stop", []),
+                stream=body.get("stream", False)
             )
 
             if self.valves.USE_PERMISSIVE_SAFETY:
-                safety_settings = {
-                    genai.types.HarmCategory.HARM_CATEGORY_HARASSMENT: genai.types.HarmBlockThreshold.BLOCK_NONE,
-                    genai.types.HarmCategory.HARM_CATEGORY_HATE_SPEECH: genai.types.HarmBlockThreshold.BLOCK_NONE,
-                    genai.types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: genai.types.HarmBlockThreshold.BLOCK_NONE,
-                    genai.types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: genai.types.HarmBlockThreshold.BLOCK_NONE,
+                params.safety_settings = {
+                    "harassment": "none",
+                    "hate_speech": "none",
+                    "sexually_explicit": "none",
+                    "dangerous_content": "none"
                 }
-            else:
-                safety_settings = body.get("safety_settings")
 
-            response = model.generate_content(
-                contents,
-                generation_config=generation_config,
-                safety_settings=safety_settings,
-                stream=body.get("stream", False),
-                config=GenerateContentConfig(
-                    tools=[Tool(
-                        google_search=GoogleSearchRetrieval
-                    )]
-                )
+            response = model.generate(
+                messages=conversation,
+                params=params
             )
 
             if body.get("stream", False):
@@ -176,7 +145,7 @@ class Pipeline:
             else:
                 return response.text
 
-        except Exception as e:
+        except GenAiException as e:
             print(f"Error generating content: {e}")
             return f"An error occurred: {str(e)}"
 
