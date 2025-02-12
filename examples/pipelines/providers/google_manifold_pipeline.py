@@ -112,20 +112,18 @@ class Pipeline:
                         parts = []
                         for content in message["content"]:
                             if content["type"] == "text":
-                                parts.append({"text": content["text"]})
+                                parts.append(types.Part.from_text(content["text"]))
                             elif content["type"] == "image_url":
                                 image_url = content["image_url"]["url"]
                                 if image_url.startswith("data:image"):
                                     image_data = image_url.split(",")[1]
-                                    parts.append({"inline_data": {"mime_type": "image/jpeg", "data": image_data}})
+                                    parts.append(types.Part.from_uri(image_data, mime_type="image/jpeg"))
                                 else:
-                                    parts.append({"image_url": image_url})
-                        contents.append({"role": message["role"], "parts": parts})
+                                    parts.append(types.Part.from_uri(image_url))
+                        contents.append(types.Content(parts,role="user" if message["role"] == "user" else "model"))
                     else:
-                        contents.append({
-                            "role": "user" if message["role"] == "user" else "model",
-                            "parts": [{"text": message["content"]}]
-                        })
+                        contents.append(types.Content([types.Part.from_text(message["content"])],role="user" if message["role"] == "user" else "model"))
+
         
 
             generation_config = types.GenerateContentConfig(
