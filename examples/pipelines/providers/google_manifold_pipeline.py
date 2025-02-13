@@ -13,7 +13,7 @@ from typing import List, Union, Iterator
 import os
 
 from pydantic import BaseModel, Field
-
+import base64
 from google import genai
 from google.genai import types
 class Pipeline:
@@ -91,79 +91,79 @@ class Pipeline:
         if not self.valves.GOOGLE_API_KEY:
             return "Error: GOOGLE_API_KEY is not set"
 
-        try:
-            self.client = genai.Client(api_key=self.valves.GOOGLE_API_KEY)
-            if model_id.startswith("google_genai."):
-                model_id = model_id[12:]
-            model_id = model_id.lstrip(".")
+        # try:
+        self.client = genai.Client(api_key=self.valves.GOOGLE_API_KEY)
+        if model_id.startswith("google_genai."):
+            model_id = model_id[12:]
+        model_id = model_id.lstrip(".")
 
-            if not model_id.startswith("gemini-"):
-                return f"Error: Invalid model name format: {model_id}"
+        if not model_id.startswith("gemini-"):
+            return f"Error: Invalid model name format: {model_id}"
 
-            print(f"Pipe function called for model: {model_id}")
-            print(f"Stream mode: {body.get('stream', False)}")
+        print(f"Pipe function called for model: {model_id}")
+        print(f"Stream mode: {body.get('stream', False)}")
 
-            system_message = next((msg["content"] for msg in messages if msg["role"] == "system"), None)
-            
-            contents = []
-            for message in messages:
-                if message["role"] != "system":
-                    if isinstance(message.get("content"), list):
-                        parts = []
-                        for content in message["content"]:
-                            if content["type"] == "text":
-                                parts.append(types.Part.from_text(content["text"]))
-                            elif content["type"] == "image_url":
-                                image_url = content["image_url"]["url"]
-                                if image_url.startswith("data:image"):
-                                    image_data = image_url.split(",")[1]
-                                    parts.append(types.Part.from_uri(image_data, mime_type="image/jpeg"))
-                                else:
-                                    parts.append(types.Part.from_uri(image_url))
-                        contents.append(types.Content(parts,role="user" if message["role"] == "user" else "model"))
-                    else:
-                        contents.append(types.Content([types.Part.from_text(message["content"])],role="user" if message["role"] == "user" else "model"))
-
+        system_message = next((msg["content"] for msg in messages if msg["role"] == "system"), None)
         
-
-            generation_config = types.GenerateContentConfig(
-                temperature=body.get("temperature", 0.7),
-                top_p=body.get("top_p", 0.9),
-                top_k=body.get("top_k", 40),
-                max_output_tokens=body.get("max_tokens", 8192),
-                stop_sequences=body.get("stop", []),
-                system_instruction=system_message,
-                tools=[types.Tool(
-                    google_search=types.GoogleSearchRetrieval
-                )]
-            )
-
-            if body.get("stream", False):
-
-                response = self.client.models.generate_content_stream(
-                    model=model_id,
-                    contents=contents,
-                    config=generation_config,
-                )
-                return self.stream_response(response)
-            else:
-                response = self.client.models.generate_content(
-                    model=model_id,
-                    contents=contents,
-                    config=generation_config,
-                )
-                return response.text
-
+        contents = []
+        for message in messages:
+            if message["role"] != "system":
+                if isinstance(message.get("content"), list):
+                    parts = []
+                    for content in message["content"]:
+                        if content["type"] == "text":
+                            parts.append(types.Part.from_text(text=content["text"]))
+                        elif content["type"] == "image_url":
+                            image_url = content["image_url"]["url"]
+                        
+                            if image_url.startswith("data:image"):
+                                image_data = base64.b64decode(image_url.split(",")[1])
+                                parts.append(types.Part.from_bytes(data=image_data, mime_type="image/jpeg"))
+                            else:
+                                parts.append(types.Part.from_uri(file_uri=image_url,mime_type="image/jpeg"))
+                    contents.append(types.Content(parts=parts,role="user" if message["role"] == "user" else "model"))
+                else:
+                    contents.append(types.Content(parts=[types.Part.from_text(text=str(message["content"]) )],role="user" if message["role"] == "user" else "model"))
 
     
 
-        except Exception as e:
-            print(f"Error generating content: {e}")
-            return f"An error occurred: {str(e)}"
+        generation_config = types.GenerateContentConfig(
+            temperature=body.get("temperature", 0.7),
+            top_p=body.get("top_p", 0.9),
+            top_k=body.get("top_k", 40),
+            max_output_tokens=body.get("max_tokens", 8192),
+            stop_sequences=body.get("stop", []),
+            system_instruction=system_message,
+            tools=[types.Tool(
+                google_search=types.GoogleSearchRetrieval
+            )]
+        )
+
+        if body.get("stream", False):
+
+            response = self.client.models.generate_content_stream(
+                model=model_id,
+                contents=contents,
+                config=generation_config,
+            )
+            return self.stream_response(response)
+        else:
+            response = self.client.models.generate_content(
+                model=model_id,
+                contents=contents,
+                config=generation_config,
+            )
+            return response.text
+
+
+
+
+        # except Exception as e:
+        #     print(f"Error generating content: {e}")
+        #     return f"An error occurred: {str(e)}"
 
     def stream_response(self, response):
         for chunk in response:
-            print(chunk)
             if chunk.text:
                 sources = ""
                 if chunk.candidates[0].grounding_metadata is not None and  chunk.candidates[0].grounding_metadata.grounding_chunks is not None:
